@@ -1,0 +1,62 @@
+data {
+  int<lower=1> N;                       // number of teams
+  array[N, N] int<lower=0,upper=1> Y;    // binary Over/Under adjacency
+  int<lower=1> P;                       // number of covariates
+  int<lower=1> K;                       // latent dimension
+  matrix[N,P] X;                        // team covariates (z‑scored in R)
+  
+  // hyper‑parameters for scale priors
+  real<lower=0> a_u;
+  real<lower=0> b_u;
+  real<lower=0> a_lambda;
+  real<lower=0> b_lambda;
+  real<lower=0> a_zeta;
+  real<lower=0> b_zeta;
+}
+
+parameters {
+  matrix[N,K] U_raw;
+  real<lower=0> sigma_u;
+
+  vector[K] lambda_raw;
+  real<lower=0> kappa_lambda;
+
+  real zeta_raw;
+  real<lower=0> w_zeta;
+
+  vector[P] beta;
+}
+
+transformed parameters {
+  matrix[N,K] U = U_raw * sigma_u;
+  vector[K]  lambda = lambda_raw * kappa_lambda;
+  real       zeta   = zeta_raw   * w_zeta;
+}
+
+model {
+  // Priors
+  to_vector(U_raw)   ~ normal(0, 1);
+  lambda_raw        ~ normal(0, 1);
+  zeta_raw          ~ normal(0, 1);
+  beta              ~ normal(0, 1);
+
+  sigma_u         ~ inv_gamma(a_u, b_u);
+  kappa_lambda    ~ inv_gamma(a_lambda, b_lambda);
+  w_zeta          ~ inv_gamma(a_zeta, b_zeta);
+
+  // Likelihood
+  for (i in 1:(N-1)) {
+    for (j in (i+1):N) {
+      // convert rows to vectors
+      vector[K] ui   = to_vector(U[i]);
+      vector[K] uj   = to_vector(U[j]);
+      vector[P] avgX = to_vector(0.5 * (X[i] + X[j]));
+
+      real eta = zeta
+               + dot_product(beta, avgX)
+               + dot_product(ui .* lambda, uj);
+
+      target += bernoulli_logit_lpmf(Y[i][j] | eta);
+    }
+  }
+}
