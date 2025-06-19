@@ -1,0 +1,58 @@
+# diagnostics_and_plots.R
+# – Loads fitted model
+# – Runs MCMC diagnostics & latent‐space visualizations
+
+library(bayesplot)
+library(posterior)
+library(ggplot2)
+library(dplyr)
+library(ggraph)
+library(igraph)
+library(ggrepel)
+
+load("data/prepped_data.RData")  # adj_list, cov_matrix, all_teams
+load("fits/fit_cov.RData")       # fit_cov
+
+draws_df <- as_draws_df(fit_cov$draws())
+summary_df <- fit_cov$summary()
+
+# ─── R-hat & ESS ──────────────────────────────────────────────────────────────
+print(mcmc_rhat(rhat = summary_df$rhat))
+print(ess_bulk(summary_df))
+
+# ─── TRACE PLOTS ──────────────────────────────────────────────────────────────
+mcmc_trace(draws_df, pars = c("ZETA", "LAMBDA[1]", "LAMBDA[2]"))
+
+# ─── LATENT MEANS & CLUSTERING ─────────────────────────────────────────────────
+teams <- data.frame(team = all_teams)
+teams$U1 <- sapply(seq_along(all_teams),
+                   function(i) mean(draws_df[[paste0("U[",i,",1]")]]))
+teams$U2 <- sapply(seq_along(all_teams),
+                   function(i) mean(draws_df[[paste0("U[",i,",2]")]]))
+
+set.seed(123)
+teams$cluster <- as.factor(kmeans(teams[,c("U1","U2")], centers = 5)$cluster)
+
+p_latent <- ggplot(teams, aes(U1, U2, color = cluster, label = team)) +
+  geom_point(size = 4) +
+  geom_text_repel() +
+  labs(title = "K-means Clusters in Latent Space") +
+  theme_minimal()
+print(p_latent)
+
+# ─── POSTERIOR PREDICTIVE DENSITY ─────────────────────────────────────────────
+M1 <- adj_list[[1]]
+n  <- nrow(M1)
+true_density <- sum(M1[upper.tri(M1)]) / choose(n,2)
+
+theta_names <- grep("^THETA\\[", names(draws_df), value = TRUE)
+p_mat <- sapply(theta_names, function(nm) mean(draws_df[[nm]]))
+p_vec <- p_mat
+pred_df <- data.frame(pred = p_vec)
+
+p_density <- ggplot(pred_df, aes(pred)) +
+  geom_density(alpha = .7) +
+  geom_vline(xintercept = true_density, linetype = "dashed") +
+  labs(title = "Posterior Predictive Density", x = "Predicted Density") +
+  theme_minimal()
+print(p_density)
