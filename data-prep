@@ -1,0 +1,69 @@
+# data_prep.R
+# – Loads & cleans NBA Over/Under data
+# – Builds adjacency‐matrix list per meeting
+# – Constructs team covariate matrix
+
+library(dplyr)
+library(readxl)
+library(igraph)
+
+# ─── LOAD RAW DATA ─────────────────────────────────────────────────────────────
+raw_data_2023 <- read_excel(
+  "data/nba.data.23.24.season.xlsx",
+  sheet = "data"
+) %>% 
+  bind_rows(
+    read_excel("data/oddsData.xlsx", sheet = "data")
+  )
+
+# ─── CLEAN & ASSIGN MEETING NUMBERS ────────────────────────────────────────────
+clean_data <- raw_data_2023 %>%
+  mutate(
+    pair_id = ifelse(Team < Opponent,
+                     paste0(Team, "-", Opponent),
+                     paste0(Opponent, "-", Team))
+  ) %>%
+  arrange(Date) %>%
+  group_by(pair_id) %>%
+  mutate(meeting_number = row_number()) %>%
+  ungroup() %>%
+  mutate(Margin = as.numeric(`O/U Margin`))
+
+# ─── BUILD ADJACENCY LIST ─────────────────────────────────────────────────────
+all_teams   <- sort(unique(c(clean_data$Team, clean_data$Opponent)))
+N           <- length(all_teams)
+team_index  <- setNames(seq_len(N), all_teams)
+M           <- max(clean_data$meeting_number)
+
+adj_list <- lapply(seq_len(M), function(m) {
+  matrix(0, nrow = N, ncol = N)
+})
+
+for (i in seq_len(nrow(clean_data))) {
+  row_i       <- clean_data[i, ]
+  idx_i       <- team_index[[row_i$Team]]
+  idx_j       <- team_index[[row_i$Opponent]]
+  this_meet   <- row_i$meeting_number
+  edge_ij     <- as.integer(row_i$Margin > 0)
+  adj_list[[this_meet]][idx_i, idx_j] <- edge_ij
+  adj_list[[this_meet]][idx_j, idx_i] <- edge_ij
+}
+
+# remove self‐loops
+for (m in seq_len(M)) diag(adj_list[[m]]) <- 0
+
+# ─── QUICK PLOT EXAMPLES ──────────────────────────────────────────────────────
+g1 <- graph_from_adjacency_matrix(adj_list[[1]], mode = "undirected")
+plot(g1, main = "Meeting 1 Network")
+
+if (M >= 2) {
+  g2 <- graph_from_adjacency_matrix(adj_list[[2]], mode = "undirected")
+  plot(g2, main = "Meeting 2 Network")
+}
+
+# ─── COVARIATE MATRIX ──────────────────────────────────────────────────────────
+cov_data    <- read_excel("data/oddsData.xlsx", sheet = "cov")
+cov_matrix  <- as.matrix(cov_data[, c("PPG", "FG%", "3P%", "FT%")])
+
+# Save objects for next scripts
+save(adj_list, cov_matrix, all_teams, file = "data/prepped_data.RData")
